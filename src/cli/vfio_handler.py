@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 VFIO_REGION_INFO_STRUCT_FORMAT = (
-    "I I I I Q Q"  # argsz, flags, index, cap_off, size, offset
+    "I I I I Q Q"  # argsz, flags, index, cap_offset, size, offset
 )
 VFIO_REGION_INFO_STRUCT_SIZE = struct.calcsize(VFIO_REGION_INFO_STRUCT_FORMAT)
 VFIO_DRIVER_NAME = "vfio-pci"
@@ -300,7 +300,7 @@ class VFIOBinderImpl:
                 prefix="BIND",
             )
 
-    def _bind_to_vfio_driver(self) -> None:
+    def _perform_vfio_binding(self) -> None:
         """Bind device to vfio-pci using driver_override workflow."""
         log_info_safe(
             logger, "Binding {bdf} to vfio-pci driver", bdf=self.bdf, prefix="BIND"
@@ -370,7 +370,7 @@ class VFIOBinderImpl:
         self._unbind_current_driver(device_info)
 
         # Bind to vfio-pci
-        self._bind_to_vfio_driver()
+        self._perform_vfio_binding()
 
         # Verify binding
         final_device_info = self._get_device_info(refresh=True)

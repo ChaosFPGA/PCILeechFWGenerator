@@ -14,7 +14,8 @@ from typing import List, Optional
 from log_config import get_logger
 from shell import Shell
 
-from .vfio_handler import VFIOBinder  # auto‑fix & diagnostics baked in
+from .vfio import (VFIOBinder,  # auto‑fix & diagnostics baked in
+                   get_current_driver, restore_driver)
 
 # Import safe logging functions
 try:
@@ -242,9 +243,7 @@ def run_build(cfg: BuildConfig) -> None:
 
             # Ensure VFIO cleanup
             try:
-                from .vfio import restore_driver
-
-                if hasattr(cfg, "bdf") and cfg.bdf:
+                if cfg.bdf:  # This is sufficient since bdf is a required field
                     log_info_safe(
                         logger,
                         "Ensuring VFIO cleanup for device {bdf}",
@@ -253,8 +252,6 @@ def run_build(cfg: BuildConfig) -> None:
                     )
                     # Get original driver if possible
                     try:
-                        from .vfio import get_current_driver
-
                         original_driver = get_current_driver(cfg.bdf)
                         restore_driver(cfg.bdf, original_driver)
                     except Exception:
