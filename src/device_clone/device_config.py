@@ -23,6 +23,13 @@ except ImportError:
     yaml = None
     YAML_AVAILABLE = False
 
+from ..string_utils import (
+    log_info_safe,
+    log_warning_safe,
+    log_error_safe,
+    log_debug_safe,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,9 +79,9 @@ class DeviceIdentification:
 
     vendor_id: int
     device_id: int
+    class_code: int  # Must be explicitly specified - no default for security
     subsystem_vendor_id: int = 0x0000
     subsystem_device_id: int = 0x0000
-    class_code: int = 0x040300  # Default: multimedia audio controller
 
     def validate(self) -> None:
         """Validate device identification values."""
@@ -304,69 +311,11 @@ class DeviceConfiguration:
 class DeviceConfigManager:
     """Manages device configurations with file loading and validation."""
 
-    # Default device profiles
-    DEFAULT_PROFILES = {
-        "generic": DeviceConfiguration(
-            name="generic",
-            device_type=DeviceType.GENERIC,
-            device_class=DeviceClass.CONSUMER,
-            identification=DeviceIdentification(
-                vendor_id=0x1234,
-                device_id=0x5678,
-                class_code=0x040300,  # Multimedia audio controller
-            ),
-        ),
-        "network_card": DeviceConfiguration(
-            name="network_card",
-            device_type=DeviceType.NETWORK,
-            device_class=DeviceClass.CONSUMER,
-            identification=DeviceIdentification(
-                vendor_id=0x8086,  # Intel
-                device_id=0x10D3,  # 82574L Gigabit Network Connection
-                class_code=0x020000,  # Ethernet controller
-            ),
-            capabilities=DeviceCapabilities(
-                max_payload_size=512,
-                msi_vectors=1,
-                supports_msi=True,
-                link_width=1,
-            ),
-        ),
-        "audio_controller": DeviceConfiguration(
-            name="audio_controller",
-            device_type=DeviceType.AUDIO,
-            device_class=DeviceClass.CONSUMER,
-            identification=DeviceIdentification(
-                vendor_id=0x8086,  # Intel
-                device_id=0x2668,  # ICH6 AC'97 Audio Controller
-                class_code=0x040100,  # Audio device
-            ),
-            capabilities=DeviceCapabilities(
-                max_payload_size=256,
-                msi_vectors=1,
-                supports_msi=True,
-                link_width=1,
-            ),
-        ),
-        "storage_controller": DeviceConfiguration(
-            name="storage_controller",
-            device_type=DeviceType.STORAGE,
-            device_class=DeviceClass.ENTERPRISE,
-            identification=DeviceIdentification(
-                vendor_id=0x1000,  # LSI Logic / Symbios Logic
-                device_id=0x0058,  # SAS1068E PCI-Express Fusion-MPT SAS
-                class_code=0x010700,  # Serial Attached SCSI controller
-            ),
-            capabilities=DeviceCapabilities(
-                max_payload_size=512,
-                msi_vectors=8,
-                supports_msi=True,
-                supports_msix=True,
-                msix_vectors=16,
-                link_width=4,
-            ),
-        ),
-    }
+    # Default device profiles - REMOVED FOR SECURITY
+    # Previously contained hardcoded vendor/device IDs that could create
+    # insecure generic firmware. Use live device detection or explicit
+    # configuration files instead.
+    DEFAULT_PROFILES = {}
 
     def __init__(self, config_dir: Optional[Path] = None):
         """Initialize configuration manager."""
@@ -377,7 +326,11 @@ class DeviceConfigManager:
     def _load_default_profiles(self) -> None:
         """Load default device profiles."""
         self.profiles.update(self.DEFAULT_PROFILES)
-        logger.debug(f"Loaded {len(self.DEFAULT_PROFILES)} default device profiles")
+        log_debug_safe(
+            logger,
+            "Loaded {count} default device profiles",
+            count=len(self.DEFAULT_PROFILES),
+        )
 
     def load_config_file(self, file_path: Union[str, Path]) -> DeviceConfiguration:
         """Load device configuration from file."""
@@ -402,25 +355,40 @@ class DeviceConfigManager:
             config = self._dict_to_config(data)
             config.validate()
 
-            logger.info(f"Loaded device configuration from {file_path}")
+            log_info_safe(
+                logger,
+                "Loaded device configuration from {file_path}",
+                file_path=str(file_path),
+            )
             return config
 
         except Exception as e:
-            logger.error(f"Failed to load configuration from {file_path}: {e}")
+            log_error_safe(
+                logger,
+                "Failed to load configuration from {file_path}: {error}",
+                file_path=str(file_path),
+                error=e,
+            )
             raise
 
     def _dict_to_config(self, data: Dict[str, Any]) -> DeviceConfiguration:
         """Convert dictionary to DeviceConfiguration."""
+        # Require explicit class_code - no default for security
+        if "class_code" not in data["identification"]:
+            raise ValueError(
+                "class_code must be explicitly specified in device identification"
+            )
+
         identification = DeviceIdentification(
             vendor_id=data["identification"]["vendor_id"],
             device_id=data["identification"]["device_id"],
+            class_code=data["identification"]["class_code"],
             subsystem_vendor_id=data["identification"].get(
                 "subsystem_vendor_id", 0x0000
             ),
             subsystem_device_id=data["identification"].get(
                 "subsystem_device_id", 0x0000
             ),
-            class_code=data["identification"].get("class_code", 0x040300),
         )
 
         registers = PCIeRegisters(
@@ -487,16 +455,24 @@ class DeviceConfigManager:
         # Try to load from file
         config_file = self.config_dir / f"{name}.yaml"
         if config_file.exists():
-            logger.warning("=" * 80)
-            logger.warning("⚠️  WARNING: USING PRECONFIGURED YAML DEVICE CONFIGURATION")
-            logger.warning(f"   Loading device profile from: {config_file}")
-            logger.warning(
-                "   This uses hardcoded vendor/device IDs that may not be unique!"
+            log_warning_safe(logger, "=" * 80)
+            log_warning_safe(
+                logger, "⚠️  WARNING: USING PRECONFIGURED YAML DEVICE CONFIGURATION"
             )
-            logger.warning(
-                "   Consider using live device detection instead of YAML configs."
+            log_warning_safe(
+                logger,
+                "   Loading device profile from: {config_file}",
+                config_file=str(config_file),
             )
-            logger.warning("=" * 80)
+            log_warning_safe(
+                logger,
+                "   This uses hardcoded vendor/device IDs that may not be unique!",
+            )
+            log_warning_safe(
+                logger,
+                "   Consider using live device detection instead of YAML configs.",
+            )
+            log_warning_safe(logger, "=" * 80)
             config = self.load_config_file(config_file)
             self.profiles[name] = config
             return config
@@ -504,16 +480,24 @@ class DeviceConfigManager:
         # Try JSON file
         config_file = self.config_dir / f"{name}.json"
         if config_file.exists():
-            logger.warning("=" * 80)
-            logger.warning("⚠️  WARNING: USING PRECONFIGURED JSON DEVICE CONFIGURATION")
-            logger.warning(f"   Loading device profile from: {config_file}")
-            logger.warning(
-                "   This uses hardcoded vendor/device IDs that may not be unique!"
+            log_warning_safe(logger, "=" * 80)
+            log_warning_safe(
+                logger, "⚠️  WARNING: USING PRECONFIGURED JSON DEVICE CONFIGURATION"
             )
-            logger.warning(
-                "   Consider using live device detection instead of JSON configs."
+            log_warning_safe(
+                logger,
+                "   Loading device profile from: {config_file}",
+                config_file=str(config_file),
             )
-            logger.warning("=" * 80)
+            log_warning_safe(
+                logger,
+                "   This uses hardcoded vendor/device IDs that may not be unique!",
+            )
+            log_warning_safe(
+                logger,
+                "   Consider using live device detection instead of JSON configs.",
+            )
+            log_warning_safe(logger, "=" * 80)
             config = self.load_config_file(config_file)
             self.profiles[name] = config
             return config
@@ -521,10 +505,38 @@ class DeviceConfigManager:
         raise ValueError(f"Device profile not found: {name}")
 
     def create_profile_from_env(self, name: str) -> DeviceConfiguration:
-        """Create device profile from environment variables."""
-        vendor_id = int(os.getenv(f"PCIE_{name.upper()}_VENDOR_ID", "0x1234"), 0)
-        device_id = int(os.getenv(f"PCIE_{name.upper()}_DEVICE_ID", "0x5678"), 0)
-        class_code = int(os.getenv(f"PCIE_{name.upper()}_CLASS_CODE", "0x040300"), 0)
+        """
+        Create device profile from environment variables.
+
+        SECURITY NOTE: All device identification values must be explicitly
+        provided via environment variables. No default values are used to
+        prevent insecure generic firmware.
+
+        Required environment variables:
+        - PCIE_{NAME}_VENDOR_ID: PCIe vendor ID (hex format)
+        - PCIE_{NAME}_DEVICE_ID: PCIe device ID (hex format)
+        - PCIE_{NAME}_CLASS_CODE: PCIe class code (hex format)
+        """
+        vendor_id_env = os.getenv(f"PCIE_{name.upper()}_VENDOR_ID")
+        device_id_env = os.getenv(f"PCIE_{name.upper()}_DEVICE_ID")
+        class_code_env = os.getenv(f"PCIE_{name.upper()}_CLASS_CODE")
+
+        if not vendor_id_env:
+            raise ValueError(
+                f"PCIE_{name.upper()}_VENDOR_ID environment variable is required"
+            )
+        if not device_id_env:
+            raise ValueError(
+                f"PCIE_{name.upper()}_DEVICE_ID environment variable is required"
+            )
+        if not class_code_env:
+            raise ValueError(
+                f"PCIE_{name.upper()}_CLASS_CODE environment variable is required"
+            )
+
+        vendor_id = int(vendor_id_env, 0)
+        device_id = int(device_id_env, 0)
+        class_code = int(class_code_env, 0)
 
         identification = DeviceIdentification(
             vendor_id=vendor_id,
@@ -542,7 +554,11 @@ class DeviceConfigManager:
         config.validate()
         self.profiles[name] = config
 
-        logger.info(f"Created device profile '{name}' from environment variables")
+        log_info_safe(
+            logger,
+            "Created device profile '{name}' from environment variables",
+            name=name,
+        )
         return config
 
     def list_profiles(self) -> List[str]:
@@ -582,10 +598,19 @@ class DeviceConfigManager:
             # Add the profile to the in-memory profiles dictionary
             self.profiles[config.name] = config
 
-            logger.info(f"Saved device configuration to {file_path}")
+            log_info_safe(
+                logger,
+                "Saved device configuration to {file_path}",
+                file_path=str(file_path),
+            )
 
         except Exception as e:
-            logger.error(f"Failed to save configuration to {file_path}: {e}")
+            log_error_safe(
+                logger,
+                "Failed to save configuration to {file_path}: {error}",
+                file_path=str(file_path),
+                error=e,
+            )
             raise
 
 
@@ -601,10 +626,31 @@ def get_config_manager() -> DeviceConfigManager:
     return _config_manager
 
 
-def get_device_config(profile_name: str = "generic") -> DeviceConfiguration:
-    """Get device configuration by profile name."""
+def get_device_config(profile_name: str) -> Optional[DeviceConfiguration]:
+    """
+    Get device configuration by profile name.
+
+    SECURITY NOTE: No default profiles are provided to prevent insecure
+    generic firmware. You must specify a profile name or use live device
+    detection instead of hardcoded configurations.
+
+    Args:
+        profile_name: Name of the device profile to load
+
+    Returns:
+        DeviceConfiguration if found, None if not found (for graceful degradation)
+    """
     manager = get_config_manager()
-    return manager.get_profile(profile_name)
+    try:
+        return manager.get_profile(profile_name)
+    except ValueError:
+        # Profile not found - return None for graceful degradation
+        log_warning_safe(
+            logger,
+            "Device profile '{profile_name}' not found, using live device detection",
+            profile_name=profile_name,
+        )
+        return None
 
 
 def validate_hex_id(value: str, bit_width: int = 16) -> int:
@@ -657,5 +703,7 @@ def generate_device_state_machine(registers: List[Dict[str, Any]]) -> Dict[str, 
         return device_state_machine
 
     except Exception as e:
-        logger.error(f"Error in generate_device_state_machine: {e}")
+        log_error_safe(
+            logger, "Error in generate_device_state_machine: {error}", error=e
+        )
         return {}

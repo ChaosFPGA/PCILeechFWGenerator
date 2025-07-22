@@ -7,8 +7,7 @@ Usage examples
     ./cli build
 
     # scripted build for CI (non‑interactive)
-    ./cli build --bdf 0000:01:00.0 --board pcileech_75t484_x1 \
-                --device-type network --advanced-sv
+    ./cli build --bdf 0000:01:00.0 --board pcileech_75t484_x1 --advanced-sv
 
     # flash an already‑generated bitstream
     ./cli flash output/firmware.bin --board pcileech_75t484_x1
@@ -24,9 +23,17 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from log_config import get_logger, setup_logging
-from shell import Shell
+try:
+    # Try direct import first (when run as a module)
+    from log_config import get_logger, setup_logging
+    from shell import Shell
+except ImportError:
+    # Fallback to absolute import (when run as a script)
+    from src.log_config import get_logger, setup_logging
+    from src.shell import Shell
 
+
+from ..string_utils import log_info_safe, log_warning_safe
 from .container import BuildConfig, run_build  # new unified runner
 
 logger = get_logger(__name__)
@@ -97,17 +104,19 @@ def build_sub(parser: argparse._SubParsersAction):
     p.add_argument("--bdf", help="PCI BDF (skip for interactive picker)")
     p.add_argument("--board", choices=SUPPORTED_BOARDS, help="FPGA board")
     p.add_argument(
-        "--device-type",
-        default="generic",
-        choices=["generic", "network", "storage", "graphics", "audio"],
-        help="Type of device being cloned",
-    )
-    p.add_argument(
         "--advanced-sv", action="store_true", help="Enable advanced SV features"
     )
     p.add_argument("--enable-variance", action="store_true", help="Enable variance")
     p.add_argument(
         "--auto-fix", action="store_true", help="Let VFIOBinder auto-remediate issues"
+    )
+    p.add_argument(
+        "--output-template",
+        help="Output donor info JSON template alongside build artifacts",
+    )
+    p.add_argument(
+        "--donor-template",
+        help="Use donor info JSON template to override discovered values",
     )
 
     # Add active device configuration group
@@ -171,6 +180,27 @@ def flash_sub(parser: argparse._SubParsersAction):
     )
 
 
+def donor_template_sub(parser: argparse._SubParsersAction):
+    p = parser.add_parser("donor-template", help="Generate a donor info JSON template")
+    p.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("donor_info_template.json"),
+        help="Output file path (default: donor_info_template.json)",
+    )
+    p.add_argument(
+        "--compact",
+        action="store_true",
+        help="Generate compact JSON without indentation",
+    )
+    p.add_argument(
+        "--with-comments",
+        action="store_true",
+        help="Generate template with explanatory comments (not valid JSON)",
+    )
+
+
 def get_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser("cli", description=__doc__)
     sub = ap.add_subparsers(
@@ -180,6 +210,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     build_sub(sub)
     flash_sub(sub)
+    donor_template_sub(sub)
     return ap
 
 
@@ -187,8 +218,7 @@ def flash_bin(path: Path):
     from .flash import flash_firmware
 
     flash_firmware(path)
-
-    logger.info("Firmware flashed successfully ✓")
+    log_info_safe(logger, "Firmware flashed successfully ✓")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -221,8 +251,8 @@ def main(argv: Optional[List[str]] = None):
             and args.legacy_compatibility
             and fallback_mode == "none"
         ):
-            logger.warning(
-                "Legacy compatibility mode enabled - using 'auto' fallback mode"
+            log_warning_safe(
+                logger, "Legacy compatibility mode enabled - using 'auto' fallback mode"
             )
             fallback_mode = "auto"
             if not allowed_fallbacks:
@@ -236,7 +266,6 @@ def main(argv: Optional[List[str]] = None):
         cfg = BuildConfig(
             bdf=bdf,
             board=board,
-            device_type=args.device_type,
             advanced_sv=args.advanced_sv,
             enable_variance=args.enable_variance,
             auto_fix=args.auto_fix,
@@ -248,11 +277,42 @@ def main(argv: Optional[List[str]] = None):
             active_interrupt_mode=getattr(args, "active_interrupt_mode", "msi"),
             active_interrupt_vector=getattr(args, "active_interrupt_vector", 0),
             active_priority=getattr(args, "active_priority", 15),
+            output_template=getattr(args, "output_template", None),
+            donor_template=getattr(args, "donor_template", None),
         )
         run_build(cfg)
 
     elif args.cmd == "flash":
         flash_bin(Path(args.firmware))
+
+    elif args.cmd == "donor-template":
+        from ..device_clone.donor_info_template import DonorInfoTemplateGenerator
+
+        if args.with_comments:
+            # Generate template with comments (for documentation)
+            template_str = DonorInfoTemplateGenerator.generate_template_with_comments()
+            with open(args.output, "w") as f:
+                f.write(template_str)
+            log_info_safe(
+                logger,
+                "✓ Donor info template with comments saved to: {output}",
+                output=args.output,
+            )
+        else:
+            # Generate valid JSON template
+            DonorInfoTemplateGenerator.save_template(
+                args.output, pretty=not args.compact
+            )
+            log_info_safe(
+                logger, "✓ Donor info template saved to: {output}", output=args.output
+            )
+
+        log_info_safe(logger, "\nNext steps:")
+        log_info_safe(logger, "1. Fill in the device-specific values in the template")
+        log_info_safe(logger, "2. Run behavioral profiling to capture timing data")
+        log_info_safe(
+            logger, "3. Use the completed template for advanced device cloning"
+        )
 
 
 if __name__ == "__main__":

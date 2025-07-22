@@ -6,6 +6,7 @@ have correct values, and that the module can be imported without errors.
 """
 
 import ctypes
+
 import pytest
 
 from src.cli.vfio_constants import (

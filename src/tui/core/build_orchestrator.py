@@ -134,7 +134,18 @@ class BuildOrchestrator:
             return False
         except Exception as e:
             if self._current_progress:
-                self._current_progress.add_error(f"Build failed: {str(e)}")
+                error_str = str(e)
+                # Check if this is a platform compatibility error
+                if (
+                    "requires Linux" in error_str
+                    or "platform incompatibility" in error_str
+                    or "only available on Linux" in error_str
+                ):
+                    self._current_progress.add_warning(
+                        f"Build skipped due to platform compatibility: {error_str}"
+                    )
+                else:
+                    self._current_progress.add_error(f"Build failed: {error_str}")
                 await self._notify_progress()
             logger.exception("Build failed with exception")
             raise
@@ -1332,8 +1343,6 @@ class BuildOrchestrator:
 
         if cli_args.get("advanced_sv"):
             build_cmd_parts.append("--advanced-sv")
-        if cli_args.get("device_type") != "generic":
-            build_cmd_parts.append(f"--device-type {cli_args['device_type']}")
         if cli_args.get("enable_variance"):
             build_cmd_parts.append("--enable-variance")
         if cli_args.get("enable_behavior_profiling"):

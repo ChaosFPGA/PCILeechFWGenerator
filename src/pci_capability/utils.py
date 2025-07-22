@@ -10,8 +10,14 @@ import logging
 from typing import Dict
 
 from .constants import TWO_BYTE_HEADER_CAPABILITIES
-from .types import (CapabilityInfo, CapabilityType, EmulationCategory,
-                    PCICapabilityID, PCIExtCapabilityID, PruningAction)
+from .types import (
+    CapabilityInfo,
+    CapabilityType,
+    EmulationCategory,
+    PCICapabilityID,
+    PCIExtCapabilityID,
+    PruningAction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,15 +170,26 @@ def get_capability_name(cap_id: int, cap_type: CapabilityType) -> str:
     if cap_type == CapabilityType.STANDARD:
         from .constants import STANDARD_CAPABILITY_NAMES
 
-        return STANDARD_CAPABILITY_NAMES.get(cap_id, f"Unknown (0x{cap_id:02x})")
+        return STANDARD_CAPABILITY_NAMES.get(cap_id, safe_format(
+                    "Unknown (0x{cap_id:02x})",
+                    cap_id=cap_id,
+                ))
     else:
         from .constants import EXTENDED_CAPABILITY_NAMES
 
         name = EXTENDED_CAPABILITY_NAMES.get(
-            cap_id, f"Unknown Extended (0x{cap_id:04x})"
+            cap_id, safe_format(
+                    "Unknown Extended (0x{cap_id:04x})",
+                    cap_id=cap_id,
+                )
         )
         if cap_id not in EXTENDED_CAPABILITY_NAMES and cap_id <= 0x0029:
-            logger.info(f"Unknown extended capability ID 0x{cap_id:04x} encountered")
+            log_info_safe(
+                logger,
+                "Unknown extended capability ID 0x{cap_id:04x} encountered",
+                prefix="PCI_CAP",
+                cap_id=cap_id,
+            )
         return name
 
 
@@ -193,8 +210,11 @@ def validate_capability_offset(offset: int, cap_type: CapabilityType) -> bool:
         return 0x40 <= offset < 0x100
     else:
         # Extended capabilities start at 0x100 and should be DWORD aligned
-        from .constants import (PCI_EXT_CAP_ALIGNMENT, PCI_EXT_CAP_START,
-                                PCI_EXT_CONFIG_SPACE_END)
+        from .constants import (
+            PCI_EXT_CAP_ALIGNMENT,
+            PCI_EXT_CAP_START,
+            PCI_EXT_CONFIG_SPACE_END,
+        )
 
         return (
             PCI_EXT_CAP_START <= offset < PCI_EXT_CONFIG_SPACE_END
@@ -213,9 +233,9 @@ def format_capability_info(cap_info: CapabilityInfo) -> str:
         Formatted string representation of the capability
     """
     if cap_info.cap_type == CapabilityType.STANDARD:
-        return f"Standard Cap @ 0x{cap_info.offset:02x}: {cap_info.name} (ID: 0x{cap_info.cap_id:02x})"
+        return safe_format("Standard Cap @ 0x{cap_info.offset:02x}: {cap_info.name} (ID: 0x{cap_info.cap_id:02x})")
     else:
-        return f"Extended Cap @ 0x{cap_info.offset:03x}: {cap_info.name} (ID: 0x{cap_info.cap_id:04x}, Ver: {cap_info.version})"
+        return safe_format("Extended Cap @ 0x{cap_info.offset:03x}: {cap_info.name} (ID: 0x{cap_info.cap_id:04x}, Ver: {cap_info.version})")
 
 
 def get_capability_size_estimate(cap_info: CapabilityInfo) -> int:

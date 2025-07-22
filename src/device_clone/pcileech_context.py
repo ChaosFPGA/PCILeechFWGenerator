@@ -23,9 +23,14 @@ from typing import Any, Dict, List, Optional, Union
 
 from ..error_utils import extract_root_cause
 from ..exceptions import ContextError
-from ..string_utils import (format_bar_summary_table, format_bar_table,
-                            format_raw_bar_table, log_error_safe,
-                            log_info_safe, log_warning_safe)
+from ..string_utils import (
+    format_bar_summary_table,
+    format_bar_table,
+    format_raw_bar_table,
+    log_error_safe,
+    log_info_safe,
+    log_warning_safe,
+)
 from .behavior_profiler import BehaviorProfile
 from .config_space_manager import BarInfo
 from .fallback_manager import FallbackManager
@@ -34,11 +39,14 @@ from .overlay_mapper import OverlayMapper
 logger = logging.getLogger(__name__)
 
 # Import proper VFIO constants with kernel-compatible ioctl generation
-from ..cli.vfio_constants import (VFIO_DEVICE_GET_REGION_INFO,
-                                  VFIO_GROUP_GET_DEVICE_FD,
-                                  VFIO_REGION_INFO_FLAG_MMAP,
-                                  VFIO_REGION_INFO_FLAG_READ,
-                                  VFIO_REGION_INFO_FLAG_WRITE, VfioRegionInfo)
+from ..cli.vfio_constants import (
+    VFIO_DEVICE_GET_REGION_INFO,
+    VFIO_GROUP_GET_DEVICE_FD,
+    VFIO_REGION_INFO_FLAG_MMAP,
+    VFIO_REGION_INFO_FLAG_READ,
+    VFIO_REGION_INFO_FLAG_WRITE,
+    VfioRegionInfo,
+)
 
 
 class ValidationLevel(Enum):
@@ -207,6 +215,7 @@ class PCILeechContextBuilder:
         msix_data: Optional[Dict[str, Any]],
         interrupt_strategy: str = "intx",
         interrupt_vectors: int = 1,
+        donor_template: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Build comprehensive template context from all data sources.
@@ -291,6 +300,10 @@ class PCILeechContextBuilder:
                 # Add overlay mapping for configuration space shadow
                 **overlay_config,  # This adds OVERLAY_MAP and OVERLAY_ENTRIES
             }
+
+            # Merge donor template if provided
+            if donor_template:
+                context = self._merge_donor_template(context, donor_template)
 
             # Final validation
             self._validate_context_completeness(context)
@@ -1068,8 +1081,7 @@ class PCILeechContextBuilder:
 
                     # Compute and validate size encoding
                     if size > 0:
-                        from src.device_clone.bar_size_converter import \
-                            BarSizeConverter
+                        from src.device_clone.bar_size_converter import BarSizeConverter
 
                         try:
                             bar_type_str = "io" if is_io else "memory"
@@ -2286,6 +2298,47 @@ class PCILeechContextBuilder:
             "context_builder_version": "2.0.0",
             "validation_level": self.validation_level.value,
         }
+
+    def _merge_donor_template(
+        self, context: Dict[str, Any], donor_template: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Merge donor template values with discovered context values.
+
+        Template values override discovered values when there's a conflict.
+        Null values in the template are ignored.
+
+        Args:
+            context: The discovered context
+            donor_template: The donor template to merge
+
+        Returns:
+            Merged context dictionary
+        """
+        log_info_safe(
+            self.logger,
+            "Merging donor template with discovered values",
+            prefix="PCIL",
+        )
+
+        # Import the merge function from donor_info_template
+        from .donor_info_template import DonorInfoTemplateGenerator
+
+        # Create a temporary generator instance to use its merge method
+        generator = DonorInfoTemplateGenerator()
+
+        # Use the existing merge_template_with_discovered method
+        merged_context = generator.merge_template_with_discovered(
+            template=donor_template, discovered=context
+        )
+
+        log_info_safe(
+            self.logger,
+            "Successfully merged donor template with discovered values",
+            prefix="PCIL",
+        )
+
+        return merged_context
 
     def _validate_context_completeness(self, context: Dict[str, Any]) -> None:
         """
